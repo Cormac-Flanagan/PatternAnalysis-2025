@@ -1,6 +1,9 @@
 import numpy as np
 import nibabel as nib
 from tqdm import tqdm, utils
+from torch.utils.data import Dataset
+from pathlib import Path
+import re
 
 
 def to_channels(arr: np.ndarray, dtype=np.uint8) -> np.ndarray:
@@ -97,4 +100,107 @@ def load_data_3D(
         return images
 
 
-print(load_data_3D(["./data/semantic_MRs/B006_Week0_LFOV.nii.gz"], orient=True))
+class NiiPairDataset(Dataset):
+    def __init__(
+        self,
+        root_dir,
+        preload=True,
+        normImage=False,
+        getAffines=False,
+        categorical=False,
+        dtype=np.float32,
+    ):
+        """
+        root_dir/
+          ├── semantics_labels_only/*.nii.gz
+          └── semantics_MRs/*.nii.gz
+        """
+
+        self.root_dir = Path(root_dir)
+        self.semantic_dir = self.root_dir / "semantics_labels_only"
+        self.lfov_dir = self.root_dir / "semantics_MRs"
+
+        self.normImage = normImage
+        self.getAffines = getAffines
+        self.categorical = categorical
+        self.dtype = dtype
+        self.preload = preload
+
+        # Match SEMANTIC and LFOV pairs by basename
+        self.samples = []
+        for semantic_path in self.semantic_dir.glob("*.nii.gz"):
+            base_name = semantic_path.stem
+            if base_name.endswith(".nii"):
+                base_name = base_name[:-4]
+            lfov_path = self.lfov_dir / f"{base_name}.nii.gz"
+            if lfov_path.exists():
+                self.samples.append((semantic_path, lfov_path))
+            else:
+                print(f"⚠️ Missing LFOV file for {base_name}")
+
+        # Optionally preload everything in bulk
+        if preload:
+            semantic_files = [str(s[0]) for s in self.samples]
+            lfov_files = [str(s[1]) for s in self.samples]
+
+            print("📦 Preloading SEMANTIC images...")
+            self.semantic_data = load_data_3D(
+                semantic_files,
+                normImage=self.normImage,
+                categorical=self.categorical,
+                dtype=self.dtype,
+                getAffines=self.getAffines,
+            )
+            print("📦 Preloading LFOV images...")
+            self.lfov_data = load_data_3D(
+                lfov_files,
+                normImage=self.normImage,
+                categorical=self.categorical,
+                dtype=self.dtype,
+                getAffines=self.getAffines,
+            )
+        else:
+            self.semantic_data = None
+            self.lfov_data = None
+
+    def __len__(self):
+        return len(self.samples)
+
+    def __getitem__(self, idx):
+        if self.preload:
+            if self.getAffines:
+                semantic_np, semantic_aff = self.semantic_data
+                lfov_np, lfov_aff = self.lfov_data
+                semantic = torch.from_numpy(semantic_np[idx]).float()
+                lfov = torch.from_numpy(lfov_np[idx]).float()
+                return lfov, semantic, lfov_aff[idx], semantic_aff[idx]
+            else:
+                semantic_np = self.semantic_data[idx]
+                lfov_np = self.lfov_data[idx]
+                semantic = torch.from_numpy(semantic_np).float()
+                lfov = torch.from_numpy(lfov_np).float()
+                return lfov, semantic
+        else:
+            semantic_path, lfov_path = self.samples[idx]
+            lfov_np, lfov_aff = load_data_3D(
+                [str(lfov_path)],
+                normImage=self.normImage,
+                categorical=self.categorical,
+                dtype=self.dtype,
+                getAffines=True,
+            )
+            semantic_np, semantic_aff = load_data_3D(
+                [str(semantic_path)],
+                normImage=self.normImage,
+                categorical=self.categorical,
+                dtype=self.dtype,
+                getAffines=True,
+            )
+
+            lfov_tensor = torch.from_numpy(lfov_np[0]).float()
+            semantic_tensor = torch.from_numpy(semantic_np[0]).float()
+
+            if self.getAffines:
+                return lfov_tensor, semantic_tensor, lfov_aff[0], semantic_aff[0]
+            else:
+                return lfov_tensor, semantic_tensor
