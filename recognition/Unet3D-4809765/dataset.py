@@ -1,9 +1,11 @@
+from typing import Union
 import numpy as np
 import nibabel as nib
 from tqdm import tqdm, utils
 from torch.utils.data import Dataset
 from pathlib import Path
 import re
+import matplotlib.pyplot as plt
 
 
 def to_channels(arr: np.ndarray, dtype=np.uint8) -> np.ndarray:
@@ -19,7 +21,7 @@ def load_data_3D(
     imageNames,
     normImage=False,
     categorical=False,
-    dtype=np.float32,
+    dtype: Union[np.dtype, type] = np.float32,
     getAffines=False,
     orient=False,
     early_stop=False,
@@ -105,10 +107,7 @@ class NiiPairDataset(Dataset):
         self,
         root_dir,
         preload=True,
-        normImage=False,
         getAffines=False,
-        categorical=False,
-        dtype=np.float32,
     ):
         """
         root_dir/
@@ -120,10 +119,7 @@ class NiiPairDataset(Dataset):
         self.semantic_dir = self.root_dir / "semantics_labels_only"
         self.lfov_dir = self.root_dir / "semantics_MRs"
 
-        self.normImage = normImage
         self.getAffines = getAffines
-        self.categorical = categorical
-        self.dtype = dtype
         self.preload = preload
 
         # Match SEMANTIC and LFOV pairs by basename
@@ -146,17 +142,14 @@ class NiiPairDataset(Dataset):
             print("📦 Preloading SEMANTIC images...")
             self.semantic_data = load_data_3D(
                 semantic_files,
-                normImage=self.normImage,
-                categorical=self.categorical,
-                dtype=self.dtype,
+                categorical=True,
+                dtype=np.uint8,
                 getAffines=self.getAffines,
             )
             print("📦 Preloading LFOV images...")
             self.lfov_data = load_data_3D(
                 lfov_files,
-                normImage=self.normImage,
-                categorical=self.categorical,
-                dtype=self.dtype,
+                normImage=True,
                 getAffines=self.getAffines,
             )
         else:
@@ -204,3 +197,9 @@ class NiiPairDataset(Dataset):
                 return lfov_tensor, semantic_tensor, lfov_aff[0], semantic_aff[0]
             else:
                 return lfov_tensor, semantic_tensor
+
+    @property
+    def num_classes(self) -> int:
+        if self.semantic_data is None:
+            return 0
+        return np.ceil(np.max(self.semantic_data))
