@@ -1,5 +1,5 @@
 from dataset import NiiPairDataset
-from modules import Unet3D
+from modules import Unet3D, Diceloss
 import torch.nn as nn
 import torch
 from torch.utils.data import random_split, DataLoader
@@ -14,7 +14,7 @@ device = torch.device(device_name)
 def train(test_data, epochs=3):
     model = Unet3D(num_classes=6)
     model = model.to(device)
-    criterion = nn.CrossEntropyLoss()
+    criterion = Diceloss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
     scaler = torch.cuda.amp.GradScaler()
 

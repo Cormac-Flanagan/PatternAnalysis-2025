@@ -1,2 +1,6 @@
 /recognition/Unet3D-4809765/data/
+/recognition/Unet3D-4809765/__pycache__/
 /.idea/
+
+/recognition/Unet3D-4809765/logs.txt
+/recognition/Unet3D-4809765/output

@@ -3,6 +3,27 @@ import torch.nn as nn
 from torch.nn.functional import interpolate
 
 
+class Diceloss(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+
+    def forward(self, output, target, eps=1e-6):
+        """
+        output: [batch, channels, D, H, W], softmax probabilities
+        target: [batch, channels, D, H, W], one-hot
+        """
+        # sum over spatial dimensions
+        dims = (2, 3, 4)
+        intersection = (output * target).sum(dim=dims)
+        union = output.sum(dim=dims) + target.sum(dim=dims)
+
+        dice_per_class = (intersection + eps) / (union + eps)  # [batch, channels]
+
+        # average over classes and batches, apply -2 factor
+        loss = -2 * dice_per_class.mean()
+        return loss
+
+
 class ContextModule(nn.Module):
     def __init__(self, channels) -> None:
         super().__init__()
