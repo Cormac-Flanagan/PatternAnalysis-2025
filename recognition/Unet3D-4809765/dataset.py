@@ -5,6 +5,7 @@ from tqdm import tqdm, utils
 from torch.utils.data import Dataset
 from pathlib import Path
 import torch
+import kornia.augmentation as K
 
 EARLY = 1
 
@@ -47,8 +48,6 @@ def load_data_3D(
     # get fixed size
     num = len(imageNames)
     niftiImage = nib.load(imageNames[0])
-    if orient:
-        niftiImage = im.applyOrientation(niftiImage, interpolation=interp, scale=1)
 
     first_case = niftiImage.get_fdata(caching="unchanged")
     if len(first_case.shape) == 4:
@@ -64,8 +63,6 @@ def load_data_3D(
 
     for i, inName in enumerate(tqdm(imageNames)):
         niftiImage = nib.load(inName)
-        if orient:
-            niftiImage = im.applyOrientation(niftiImage, interpolation=interp, scale=1)
         inImage = niftiImage.get_fdata(caching="unchanged")
         affine = niftiImage.affine
         if len(inImage.shape) == 4:
@@ -74,7 +71,6 @@ def load_data_3D(
         inImage = inImage.astype(dtype)
 
         if normImage:
-            #
             inImage = (inImage - inImage.mean()) / inImage.std()
         if categorical:
             inImage = to_channels(inImage, dtype=dtype)
@@ -108,7 +104,6 @@ class NiiPairDataset(Dataset):
         self,
         root_dir,
         preload=True,
-        getAffines=False,
         early_stop=False,
     ):
         """
@@ -121,7 +116,6 @@ class NiiPairDataset(Dataset):
         self.semantic_dir = self.root_dir / "semantic_labels_only"
         self.lfov_dir = self.root_dir / "semantic_MRs"
 
-        self.getAffines = getAffines
         self.preload = preload
 
         # Match SEMANTIC and LFOV pairs by basename
@@ -136,6 +130,7 @@ class NiiPairDataset(Dataset):
             else:
                 print(f"Missing file for {base_name}")
 
+        self.random_crop = K.RandomCrop3D((128, 128, 128), same_on_batch=True)
         # Optionally preload everything in bulk
         if preload:
             semantic_files = [str(s[0]) for s in self.samples]
@@ -146,14 +141,12 @@ class NiiPairDataset(Dataset):
                 semantic_files,
                 categorical=True,
                 dtype=np.uint8,
-                getAffines=self.getAffines,
                 early_stop=early_stop,
             )
             print("Preloading LFOV images...")
             self.lfov_data = load_data_3D(
                 lfov_files,
                 normImage=True,
-                getAffines=self.getAffines,
                 early_stop=early_stop,
             )
         else:
@@ -165,35 +158,32 @@ class NiiPairDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.preload:
-            if self.getAffines:
-                semantic_np, semantic_aff = self.semantic_data
-                lfov_np, lfov_aff = self.lfov_data
-                semantic = (
-                    torch.from_numpy(semantic_np[idx]).permute(3, 0, 1, 2).float()
-                )
-                lfov = torch.from_numpy(lfov_np[idx]).float().unsqueeze(0)
-                print(lfov.size())
-                return lfov, semantic, lfov_aff[idx], semantic_aff[idx]
-            else:
-                semantic_np = self.semantic_data[idx]
-                lfov_np = self.lfov_data[idx]
-                semantic = torch.tensor(semantic_np).permute(3, 0, 1, 2).float()
-                lfov = torch.from_numpy(lfov_np).float().unsqueeze(0)
-                return lfov, semantic
+            semantic_np = self.semantic_data[idx]
+            lfov_np = self.lfov_data[idx]
+            lfov_np = (lfov_np - lfov_np.min()) / (lfov_np.max() - lfov_np.min() + 1e-8)
+            semantic = (
+                torch.tensor(semantic_np).permute(3, 0, 1, 2).float().unsqueeze(0)
+            )
+            lfov = torch.from_numpy(lfov_np).float().unsqueeze(0)
+
+            lfov = self.random_crop(lfov)
+            semantic = self.random_crop.forward(
+                semantic, params=self.random_crop._params
+            ).long()
+
+            return lfov.squeeze(0), semantic.squeeze(0)
         else:
             semantic_path, lfov_path = self.samples[idx]
             lfov_np, lfov_aff = load_data_3D(
                 [str(lfov_path)],
                 normImage=True,
                 categorical=False,
-                getAffines=self.getAffines,
             )
             semantic_np, semantic_aff = load_data_3D(
                 [str(semantic_path)],
                 normImage=False,
                 categorical=True,
                 dtype=np.uint8,
-                getAffines=self.getAffines,
             )
 
             lfov_tensor = torch.from_numpy(lfov_np[0]).unsqueeze(0)
@@ -201,13 +191,4 @@ class NiiPairDataset(Dataset):
                 torch.from_numpy(semantic_np[0]).permute(3, 0, 1, 2).float()
             )
 
-            if self.getAffines:
-                return lfov_tensor, semantic_tensor, lfov_aff[0], semantic_aff[0]
-            else:
-                return lfov_tensor, semantic_tensor
-
-    @property
-    def num_classes(self) -> int:
-        if self.semantic_data is None:
-            return 0
-        return np.ceil(np.max(self.semantic_data))
+            return lfov_tensor, semantic_tensor

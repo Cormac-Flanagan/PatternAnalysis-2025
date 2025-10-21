@@ -15,8 +15,8 @@ def train(test_data, epochs=3):
     model = Unet3D(num_classes=6)
     model = model.to(device)
     criterion = Diceloss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
-    scaler = torch.cuda.amp.GradScaler()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    scaler = torch.amp.grad_scaler.GradScaler()
 
     epochs_ = tqdm(range(epochs), total=epochs, desc="Epochs: ", leave=True)
     for epoch in epochs_:
@@ -29,18 +29,17 @@ def train(test_data, epochs=3):
                 loss = criterion(logits, y)
             with torch.autograd.set_detect_anomaly(True):
                 scaler.scale(loss).backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
             total_loss += loss.item()
         epochs_.set_postfix({"loss:": f"{total_loss:.4f}"})
-        with open("logs.txt", "a") as f:
-            f.write(f"{total_loss:.6f}\n")
 
 
 if __name__ == "__main__":
     torch.backends.cudnn.allow_tf32 = True
     dir = "./data"
-    dataset = NiiPairDataset(dir)
+    dataset = NiiPairDataset(dir, early_stop=True)
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -54,6 +53,8 @@ if __name__ == "__main__":
     x, y = test_set[0]  # example sample
     x = x.to(device).unsqueeze(0)  # add batch dim
     y = y.to(device).unsqueeze(0)
+    print(x.size())
+    print(y.size())
 
     model = Unet3D(num_classes=6)
     model = model.to(device)
@@ -61,7 +62,6 @@ if __name__ == "__main__":
     torch.cuda.reset_peak_memory_stats(device)
     with torch.autocast(device_type=device_name):
         logits = model(x)
-        loss = criterion(logits, y)
 
     peak = torch.cuda.max_memory_allocated(device)
 
@@ -69,7 +69,7 @@ if __name__ == "__main__":
         torch.cuda.memory_reserved(device) + torch.cuda.memory_allocated(device)
     )
 
-    safe_batch = max(1, np.floor(0.9 * free_vram / peak))
+    safe_batch = int(max(1, np.floor(0.9 * free_vram / peak)))
     print(safe_batch)
 
     loader = DataLoader(

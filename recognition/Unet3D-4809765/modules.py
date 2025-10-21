@@ -29,11 +29,11 @@ class ContextModule(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.BatchNorm3d(channels),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Conv3d(channels, channels, kernel_size=3, padding=1),
             nn.Dropout3d(0.3),
             nn.BatchNorm3d(channels),
-            nn.ReLU(inplace=True),
+            nn.LeakyReLU(inplace=True),
             nn.Conv3d(channels, channels, kernel_size=3, padding=1),
         )
 
@@ -56,7 +56,12 @@ class Localization(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv3d(in_channels, in_channels, 3, 1, 1),
+            nn.BatchNorm3d(in_channels),
+            nn.LeakyReLU(inplace=True),
             nn.Conv3d(in_channels, out_channels, 1),
+            nn.BatchNorm3d(out_channels),
+            nn.LeakyReLU(inplace=True)
+
         )
 
     def forward(self, x):
@@ -95,7 +100,7 @@ class Unet3D(nn.Module):
         self.up2 = Upsample(32, 16)
 
         self.convF = nn.Conv3d(32, 32, 3, 1, 1)
-        self.final = nn.Softmax(0)
+        self.final = nn.Softmax(1)
 
     def forward(self, r0):
         r0 = self.conv1(r0)  # N
@@ -109,11 +114,12 @@ class Unet3D(nn.Module):
         r4 = self.conv5(r3)  # N/16
         r4 = r4 + self.tex5(r4)
         r3 = torch.cat([r3, self.up5(r4)], dim=1)
-        del r4
+
         torch.cuda.empty_cache()
-        r3 = self.up4(self.loc4(r3))
+        temp = self.loc4(r3)
+        r3 = self.up4(temp)
+
         r2 = torch.cat([r3, r2], dim=1)
-        del r3
         torch.cuda.empty_cache()
         r2 = self.loc3(r2)
         r1 = torch.cat([r1, self.up3(r2)], dim=1)
@@ -127,5 +133,8 @@ class Unet3D(nn.Module):
             scale_factor=2,
             mode="nearest",
         )
+
+        if torch.isnan(r0).any():
+            print("Nan detected")
 
         return self.final(r0)
