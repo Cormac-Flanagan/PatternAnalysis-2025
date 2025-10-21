@@ -9,7 +9,6 @@ import kornia.augmentation as K
 
 EARLY = 1
 
-
 def to_channels(arr: np.ndarray, dtype=np.uint8) -> np.ndarray:
     channels = np.unique(arr)
     res = np.zeros(arr.shape + (len(channels),), dtype=dtype)
@@ -105,13 +104,14 @@ class NiiPairDataset(Dataset):
         root_dir,
         preload=True,
         early_stop=False,
+        transform: K.container.AugmentationSequential |None=None,
     ):
         """
         root_dir/
           ├── semantics_labels_only/*.nii.gz
           └── semantics_MRs/*.nii.gz
         """
-
+        self.transforms = transform
         self.root_dir = Path(root_dir)
         self.semantic_dir = self.root_dir / "semantic_labels_only"
         self.lfov_dir = self.root_dir / "semantic_MRs"
@@ -165,6 +165,9 @@ class NiiPairDataset(Dataset):
                 torch.tensor(semantic_np).permute(3, 0, 1, 2).float().unsqueeze(0)
             )
             lfov = torch.from_numpy(lfov_np).float().unsqueeze(0)
+
+            if self.transforms is not None:
+                lfov, semantic = self.transforms(lfov, semantic)
 
             lfov = self.random_crop(lfov)
             semantic = self.random_crop.forward(

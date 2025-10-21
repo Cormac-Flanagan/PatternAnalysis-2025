@@ -1,10 +1,11 @@
 from dataset import NiiPairDataset
 from modules import Unet3D, Diceloss
-import torch.nn as nn
 import torch
 from torch.utils.data import random_split, DataLoader
 from tqdm import tqdm
 import numpy as np
+import kornia.augmentation as K
+from kornia.augmentation import AugmentationSequential
 import os
 
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
@@ -37,9 +38,22 @@ def train(test_data, epochs=3):
 
 
 if __name__ == "__main__":
+    aug_list = AugmentationSequential(
+        K.RandomAffine3D(
+            degrees=45,  # random rotations up to ±45°
+            scale=(0.8, 1.2),  # random uniform scaling between 0.8× and 1.2×
+            p=0.7
+        ),
+
+        K.RandomHorizontalFlip3D(p=.4),
+        K.RandomVerticalFlip3D(p=.4),
+        data_keys=["input", "label"],
+        same_on_batch=False,
+    )
+
     torch.backends.cudnn.allow_tf32 = True
     dir = "./data"
-    dataset = NiiPairDataset(dir, early_stop=True)
+    dataset = NiiPairDataset(dir, early_stop=True, transform=aug_list)
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size

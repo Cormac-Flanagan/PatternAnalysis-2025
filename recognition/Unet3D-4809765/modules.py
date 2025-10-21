@@ -61,7 +61,6 @@ class Localization(nn.Module):
             nn.Conv3d(in_channels, out_channels, 1),
             nn.BatchNorm3d(out_channels),
             nn.LeakyReLU(inplace=True)
-
         )
 
     def forward(self, x):
