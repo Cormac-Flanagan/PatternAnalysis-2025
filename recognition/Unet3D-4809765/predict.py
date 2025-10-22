@@ -35,9 +35,11 @@ def sliding_window_predict(model, volume, window_size=(128, 128, 128), stride=(1
     return prediction.cpu().numpy()
 
 def render_segments(segments, output_path, base):
+    vmin = np.min(segments)
+    vmax = np.max(segments)
     os.makedirs(output_path, exist_ok=True)
     for i in range(segments.shape[2]):
-        plt.imshow(segments[:, :, i])
+        plt.imshow(segments[:, :, i], cmap='Set2', vmin=vmin, vmax=vmax)
         plt.axis('off')
         plt.savefig(os.path.join(output_path, f"{base}_{i:03d}.png"))
         plt.close()
@@ -57,4 +59,3 @@ def predict(model_path: str, input_path, output_path: str, base = "layer"):
 
 if __name__ == "__main__":
     predict("output/model.pth", "data/semantic_MRs/B006_Week0_LFOV.nii.gz", "output/segments")
-
