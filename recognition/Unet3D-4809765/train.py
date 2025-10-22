@@ -9,6 +9,7 @@ import kornia.augmentation as K
 from kornia.augmentation import AugmentationSequential
 import os, threading, queue
 from utils import plot_results
+import argparse
 
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
 device = torch.device(device_name)
@@ -48,23 +49,23 @@ def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transfo
         model.train()
         total_loss = 0.0
         for x, y in tqdm(train_data, leave=False, desc="Training"):
-            x, y = x.to(device), y.to(device)
+            x=x.to(device)
+            y=y.to(device)
             if transforms is not None:
                 x, y = transforms(x, y)
             optimizer.zero_grad()
             with torch.autocast(device_type=device_name):
                 logits = model(x)
                 loss = criterion(logits, y)
-            with torch.autograd.set_detect_anomaly(True):
                 scaler.scale(loss).backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             scaler.step(optimizer)
             scaler.update()
             total_loss += loss.item()
+            del x, y
         epochs_.set_postfix({"loss:": f"{total_loss:.4f}"})
 
         if epoch % val_rate == 0:
-            del x, y
             model.eval()
             val_loss = 0.0
             with torch.no_grad():
@@ -77,11 +78,11 @@ def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transfo
                 log_queue.put(
                         f"{epoch}, {total_loss/len(train_data):.6f}, {val_loss/len(val_data):.6f}"
                     )
+                del x, y
         else:
             log_queue.put(f"{epoch}, {total_loss/len(train_data):.6f}")
 
-
-if __name__ == "__main__":
+def main(dirt = "./data", output_dir = "output", epochs=30):
     aug_list = AugmentationSequential(
         K.RandomAffine3D(
             degrees=45,  # random rotations up to ±45°
@@ -95,8 +96,8 @@ if __name__ == "__main__":
     )
 
     torch.backends.cudnn.allow_tf32 = True
-    dir = "./data"
-    dataset = NiiPairDataset(dir, early_stop=0)
+
+    dataset = NiiPairDataset(dirt, early_stop=0)
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -121,7 +122,7 @@ if __name__ == "__main__":
     peak = torch.cuda.max_memory_allocated(device)
 
     free_vram = torch.cuda.get_device_properties(device).total_memory - (
-        torch.cuda.memory_reserved(device) + torch.cuda.memory_allocated(device)
+            torch.cuda.memory_reserved(device) + torch.cuda.memory_allocated(device)
     )
 
     safe_batch = int(max(1, np.floor(0.9 * free_vram / peak)))
@@ -132,7 +133,8 @@ if __name__ == "__main__":
         batch_size=safe_batch,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=min(8, os.cpu_count()),  # max 8 workers or CPU cores
+        num_workers=min(4, os.cpu_count()),  # max 8 workers or CPU cores
+
     )
 
     val = DataLoader(
@@ -140,26 +142,59 @@ if __name__ == "__main__":
         batch_size=safe_batch,
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
-        num_workers=min(8, os.cpu_count()),  # max 8 workers or CPU cores
+        num_workers=min(4, os.cpu_count()),  # max 8 workers or CPU cores
     )
 
     test_loader = DataLoader(
         test_set,
         batch_size=safe_batch,
         pin_memory=torch.cuda.is_available(),
-        num_workers=min(8, os.cpu_count()),  # max 8 workers or CPU cores
+        num_workers=min(4, os.cpu_count()),  # max 8 workers or CPU cores
     )
 
     log_queue = queue.Queue()
-    log_thread = threading.Thread(target=background_logger, args=(log_queue, ), daemon=True)
+    log_thread = threading.Thread(target=background_logger, args=(log_queue, output_dir+"results.csv"), daemon=True)
     log_thread.start()
 
-    train(model_, loader, val, log_queue, epochs=30, transforms=aug_list)
+    train(model_, loader, val, log_queue, epochs=epochs, transforms=aug_list)
     torch.cuda.empty_cache()
     test(model_, test_loader)
 
-    torch.save(model_.state_dict(), "output/model.pth")
-    log_thread.put(None)
+    torch.save(model_.state_dict(), output_dir+"/model.pth")
+    log_queue.put(None)
     log_thread.join()
 
-    plot_results("output/results.csv", "output/results.png")
+    plot_results(output_dir+"/results.csv", output_dir+"/results.png")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process some data.")
+    parser.add_argument(
+        "--input", "-i",
+        type=str,
+        help="Path to directory should contain semantic_MRs and semantic_labels_only",
+        default="./data",
+    )
+    parser.add_argument(
+        "--output", "-o",
+        type=str,
+        help="Path to output directory",
+        default="./output",
+    )
+    parser.add_argument(
+        "--epochs", "-e",
+        type=int,
+        help="Number of epochs",
+        default=30,
+    )
+    args = parser.parse_args()
+
+    input_path = args.input
+    output_dir = args.output
+    epochs = args.epochs
+
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Input: {input_path}")
+    print(f"Output directory: {output_dir}")
+    main(input_path, output_dir, epochs)
