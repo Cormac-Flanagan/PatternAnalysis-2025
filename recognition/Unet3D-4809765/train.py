@@ -8,6 +8,7 @@ import numpy as np
 import kornia.augmentation as K
 from kornia.augmentation import AugmentationSequential
 import os, threading, queue
+from utils import plot_results
 
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
 device = torch.device(device_name)
@@ -95,7 +96,7 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.allow_tf32 = True
     dir = "./data"
-    dataset = NiiPairDataset(dir, early_stop=10)
+    dataset = NiiPairDataset(dir, early_stop=0)
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -153,8 +154,12 @@ if __name__ == "__main__":
     log_thread = threading.Thread(target=background_logger, args=(log_queue, ), daemon=True)
     log_thread.start()
 
-    train(model_, loader, val, log_queue, epochs=1, transforms=aug_list)
+    train(model_, loader, val, log_queue, epochs=30, transforms=aug_list)
     torch.cuda.empty_cache()
     test(model_, test_loader)
 
     torch.save(model_.state_dict(), "output/model.pth")
+    log_thread.put(None)
+    log_thread.join()
+
+    plot_results("output/results.csv", "output/results.png")
