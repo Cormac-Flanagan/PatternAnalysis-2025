@@ -104,7 +104,7 @@ class NiiPairDataset(Dataset):
         self,
         root_dir,
         preload=True,
-        early_stop=False,
+        early_stop=0,
         transform: K.container.AugmentationSequential | None = None,
     ):
         """
@@ -130,6 +130,8 @@ class NiiPairDataset(Dataset):
                 self.samples.append((semantic_path, lfov_path))
             else:
                 print(f"Missing file for {base_name}")
+        if early_stop > 0:
+            self.samples = self.samples[:early_stop]
 
         self.random_crop = K.RandomCrop3D((128, 128, 128), same_on_batch=True)
         # Optionally preload everything in bulk
@@ -142,13 +144,11 @@ class NiiPairDataset(Dataset):
                 semantic_files,
                 categorical=True,
                 dtype=np.uint8,
-                early_stop=early_stop,
             )
             print("Preloading LFOV images...")
             self.lfov_data = load_data_3D(
                 lfov_files,
                 normImage=True,
-                early_stop=early_stop,
             )
         else:
             self.semantic_data = None

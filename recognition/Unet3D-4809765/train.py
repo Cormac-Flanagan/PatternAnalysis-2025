@@ -7,11 +7,19 @@ from tqdm import tqdm
 import numpy as np
 import kornia.augmentation as K
 from kornia.augmentation import AugmentationSequential
-import os
+import os, threading, queue
 
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
 device = torch.device(device_name)
 
+def background_logger(q, path="./output/results.csv"):
+    with open(path, "a") as f:
+        while True:
+            record = q.get()
+            if record is None:
+                break
+            f.write(record + '\n')
+            f.flush()
 
 def test(model, loader):
     model.eval()
@@ -24,11 +32,11 @@ def test(model, loader):
                 x, y = x.to(device), y.to(device)
                 logits = model(x)
                 loss.append(criterion(logits, y).item())
-    print(f"Max Dice Coefficient: {-1*np.min(loss):.f4}")
-    print(f"Min Dice Coefficient: {-1*np.max(loss):.f4}")
+    print(f"Max Dice Coefficient: {-1*min(loss):.4f}")
+    print(f"Min Dice Coefficient: {-1*max(loss):.4f}")
 
 
-def train(model, train_data, val_data, epochs=10, val_rate=5, transforms=None):
+def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transforms=None):
     criterion = Diceloss()
     criterion.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -65,13 +73,11 @@ def train(model, train_data, val_data, epochs=10, val_rate=5, transforms=None):
                         logits = model(x)
                         loss = criterion(logits, y)
                     val_loss += loss.item()
-                with open("output/results.txt", "a") as f:
-                    f.write(
-                        f"{epoch}, {total_loss/len(train_data):.6f}, {val_loss/len(val_data)}\n"
+                log_queue.put(
+                        f"{epoch}, {total_loss/len(train_data):.6f}, {val_loss/len(val_data):.6f}"
                     )
         else:
-            with open("output/results.txt", "a") as f:
-                f.write(f"{epoch}, {total_loss/len(train_data):.6f}\n")
+            log_queue.put(f"{epoch}, {total_loss/len(train_data):.6f}")
 
 
 if __name__ == "__main__":
@@ -89,7 +95,7 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.allow_tf32 = True
     dir = "./data"
-    dataset = NiiPairDataset(dir, early_stop=True)
+    dataset = NiiPairDataset(dir, early_stop=10)
     train_size = int(0.7 * len(dataset))
     val_size = int(0.15 * len(dataset))
     test_size = len(dataset) - train_size - val_size
@@ -100,7 +106,7 @@ if __name__ == "__main__":
         generator=torch.Generator().manual_seed(42),
     )
 
-    x, y = test_set[0]  # example sample
+    x, y = train_set[0]  # example sample
     x = x.to(device).unsqueeze(0)  # add batch dim
     y = y.to(device).unsqueeze(0)
 
@@ -139,11 +145,15 @@ if __name__ == "__main__":
     test_loader = DataLoader(
         test_set,
         batch_size=safe_batch,
-        shuffle=True,
         pin_memory=torch.cuda.is_available(),
         num_workers=min(8, os.cpu_count()),  # max 8 workers or CPU cores
     )
-    train(model_, loader, val, transforms=aug_list)
+
+    log_queue = queue.Queue()
+    log_thread = threading.Thread(target=background_logger, args=(log_queue, ), daemon=True)
+    log_thread.start()
+
+    train(model_, loader, val, log_queue, epochs=1, transforms=aug_list)
     torch.cuda.empty_cache()
     test(model_, test_loader)
 
