@@ -7,7 +7,8 @@ from pathlib import Path
 import torch
 import kornia.augmentation as K
 
-EARLY = 1
+EARLY = 10
+
 
 def to_channels(arr: np.ndarray, dtype=np.uint8) -> np.ndarray:
     channels = np.unique(arr)
@@ -104,7 +105,7 @@ class NiiPairDataset(Dataset):
         root_dir,
         preload=True,
         early_stop=False,
-        transform: K.container.AugmentationSequential |None=None,
+        transform: K.container.AugmentationSequential | None = None,
     ):
         """
         root_dir/

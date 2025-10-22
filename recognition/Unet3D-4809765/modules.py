@@ -133,7 +133,4 @@ class Unet3D(nn.Module):
             mode="nearest",
         )
 
-        if torch.isnan(r0).any():
-            print("Nan detected")
-
         return self.final(r0)
