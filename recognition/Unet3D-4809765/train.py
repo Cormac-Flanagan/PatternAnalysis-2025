@@ -14,14 +14,16 @@ import argparse
 device_name = "cuda" if torch.cuda.is_available() else "cpu"
 device = torch.device(device_name)
 
+
 def background_logger(q, path="./output/results.csv"):
     with open(path, "a") as f:
         while True:
             record = q.get()
             if record is None:
                 break
-            f.write(record + '\n')
+            f.write(record + "\n")
             f.flush()
+
 
 def test(model, loader):
     model.eval()
@@ -38,7 +40,9 @@ def test(model, loader):
     print(f"Min Dice Coefficient: {-1*max(loss):.4f}")
 
 
-def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transforms=None):
+def train(
+    model, train_data, val_data, log_queue, epochs=10, val_rate=5, transforms=None
+):
     criterion = Diceloss()
     criterion.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
@@ -49,8 +53,8 @@ def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transfo
         model.train()
         total_loss = 0.0
         for x, y in tqdm(train_data, leave=False, desc="Training"):
-            x=x.to(device)
-            y=y.to(device)
+            x = x.to(device)
+            y = y.to(device)
             if transforms is not None:
                 x, y = transforms(x, y)
             optimizer.zero_grad()
@@ -76,13 +80,13 @@ def train(model, train_data, val_data, log_queue, epochs=10, val_rate=5, transfo
                         loss = criterion(logits, y)
                     val_loss += loss.item()
                 log_queue.put(
-                        f"{epoch}, {total_loss/len(train_data):.6f}, {val_loss/len(val_data):.6f}"
-                    )
-                del x, y
+                    f"{epoch}, {total_loss/len(train_data):.6f}, {val_loss/len(val_data):.6f}"
+                )
         else:
             log_queue.put(f"{epoch}, {total_loss/len(train_data):.6f}")
 
-def main(dirt = "./data", output_dir = "output", epochs=30):
+
+def main(dirt="./data", output_dir="output", epochs=30):
     aug_list = AugmentationSequential(
         K.RandomAffine3D(
             degrees=45,  # random rotations up to ±45°
@@ -122,7 +126,7 @@ def main(dirt = "./data", output_dir = "output", epochs=30):
     peak = torch.cuda.max_memory_allocated(device)
 
     free_vram = torch.cuda.get_device_properties(device).total_memory - (
-            torch.cuda.memory_reserved(device) + torch.cuda.memory_allocated(device)
+        torch.cuda.memory_reserved(device) + torch.cuda.memory_allocated(device)
     )
 
     safe_batch = int(max(1, np.floor(0.9 * free_vram / peak)))
@@ -134,7 +138,6 @@ def main(dirt = "./data", output_dir = "output", epochs=30):
         shuffle=True,
         pin_memory=torch.cuda.is_available(),
         num_workers=min(4, os.cpu_count()),  # max 8 workers or CPU cores
-
     )
 
     val = DataLoader(
@@ -153,35 +156,43 @@ def main(dirt = "./data", output_dir = "output", epochs=30):
     )
 
     log_queue = queue.Queue()
-    log_thread = threading.Thread(target=background_logger, args=(log_queue, output_dir+"results.csv"), daemon=True)
+    log_thread = threading.Thread(
+        target=background_logger,
+        args=(log_queue, output_dir + "results.csv"),
+        daemon=True,
+    )
     log_thread.start()
 
     train(model_, loader, val, log_queue, epochs=epochs, transforms=aug_list)
     torch.cuda.empty_cache()
     test(model_, test_loader)
 
-    torch.save(model_.state_dict(), output_dir+"/model.pth")
+    torch.save(model_.state_dict(), output_dir + "/model.pth")
     log_queue.put(None)
     log_thread.join()
 
-    plot_results(output_dir+"/results.csv", output_dir+"/results.png")
+    plot_results(output_dir + "/results.csv", output_dir + "/results.png")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process some data.")
     parser.add_argument(
-        "--input", "-i",
+        "--input",
+        "-i",
         type=str,
         help="Path to directory should contain semantic_MRs and semantic_labels_only",
         default="./data",
     )
     parser.add_argument(
-        "--output", "-o",
+        "--output",
+        "-o",
         type=str,
         help="Path to output directory",
         default="./output",
     )
     parser.add_argument(
-        "--epochs", "-e",
+        "--epochs",
+        "-e",
         type=int,
         help="Number of epochs",
         default=30,
@@ -198,3 +209,4 @@ if __name__ == "__main__":
     print(f"Input: {input_path}")
     print(f"Output directory: {output_dir}")
     main(input_path, output_dir, epochs)
+
